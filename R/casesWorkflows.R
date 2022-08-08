@@ -188,6 +188,177 @@ pairedR1 <- function(filepath1,
   
 }
 
+pairedR2 <- function(filepath1, 
+                     filepath2, 
+                     outputsFolder, 
+                     UMIlength, 
+                     UMIdistance, 
+                     sequenceLength, 
+                     sequenceDistance,
+                     countsCutoff){
+  dir.create(outputsFolder)
+  file.create(paste0(outputsFolder, "/extra_info.txt")) 
+  memory <- c() 
+  memory[1] <-  mem_used()
+  
+  #read input files
+  reads1 <- readFastq(filepath1)
+  reads2 <- readFastq(filepath2)  
+  
+  start.time <- Sys.time()
+  # reads1 = reads1[1:300,]
+  # reads2 = reads2[1:300,]
+  
+  #File 1
+  seq <- as.data.table(sread(reads1))
+  ids <- as.data.table(reads1@id)
+  
+  full <- cbind(seq, ids)
+  names(full) <- c("read", "id")
+  
+  #File 2
+  seq2 <- as.data.table(sread(reads2))
+  ids2 <- as.data.table(reads2@id)
+  
+  full2 <- cbind(seq2, ids2)
+  names(full2) <- c("seq2", "id")
+  
+  #separate UMI and read
+  full2$UMI <- substring(full2$seq2, 1, UMIlength)
+  full2$read2 <- substring(full2$seq2, UMIlength+1, sequenceLength)
+  
+  #keep intermediate information 
+  partIDs <- as.data.table(cbind(UMI = full2$UMI, ID1 = full$id, ID2 = full2$id))
+  partIDs <- partIDs[!duplicated(UMI),]
+  partIDs <- partIDs[order(partIDs$UMI, decreasing = TRUE), ]
+  
+  intermediate.table <- full2[,.(count = .N), by=UMI,]
+  intermediate.table <- intermediate.table[order(intermediate.table$UMI, decreasing = TRUE), ]
+  intermediate.table$ID1 <- partIDs$ID1
+  intermediate.table$ID2 <- partIDs$ID2
+  intermediate.table <- intermediate.table[which(intermediate.table$count >= countsCutoff),]
+  
+  rm(partIDs)
+  memory[2] <- mem_used()
+  intermediate.table = intermediate.table[order(intermediate.table$count, decreasing = TRUE), ]
+  
+  #data preparation
+  #file 1
+  full <- separate(full, id, c("id1", "id2"), " ", remove = T)
+  full <- select(full, read, "id1")
+  colnames(full) <- c("read", "id")
+  
+  quality <- as(quality(reads1), "matrix")
+  quality = as.data.table(quality)
+  quality$id <- full$id
+  
+  #file 2
+  full2 <- separate(full2, id, c("id1", "id2")," ",remove = T)
+  full2 <- select(full2, seq2, id1, UMI)
+  colnames(full2) <- c("read", "id", "UMI")
+  
+  quality2 <- as(quality(reads2), "matrix")
+  quality2 = as.data.table(quality2)
+  quality2 = quality2[,(UMIlength+1):sequenceLength]
+  quality2$id <- full2$id
+  
+  rm(ids, ids2, seq, seq2, reads1, reads2)
+  
+  result_mean <- groupingPairedR2(intermediate.table,
+                                  full,
+                                  quality, 
+                                  full2, 
+                                  quality2, 
+                                  UMIlength)
+  memory[3] <- mem_used()
+  
+  #UMI correction
+  newUMIs <- UMIcorrectionPairedR1(intermediate.table,
+                                   result_mean,
+                                   sequenceDistance, 
+                                   UMIdistance,
+                                   outputsFolder)
+  
+  rm(intermediate.table)
+  memory[4] <- mem_used()
+  
+  consensus_mean = groupingFinalPairedR1(newUMIs, # i, 
+                                         full, 
+                                         quality, 
+                                         full2, 
+                                         quality2,
+                                         result_mean, 
+                                         UMIlength)
+  
+  memory[5] <- mem_used()
+  
+  end.time <- Sys.time()
+  
+  total.time.secs <- difftime(end.time,start.time,units = "secs")
+  total.time.mins <- difftime(end.time,start.time,units = "mins")
+  
+  line = paste0("Total time in secs: ", total.time.secs)
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Total time in mins: ", total.time.mins)
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Memory used at start: ", memory[1])
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Memory used after data cleaning: ", memory[2])
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Memory used after first consensus: ", memory[3])
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Memory used after UMI merging: ", memory[4])
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  line = paste0("Memory used after second consensus: ", memory[5])
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  # produce outputs
+  #File1
+  file <- ShortReadQ(DNAStringSet(consensus_mean$read1),
+                     FastqQuality(consensus_mean$quality1),
+                     BStringSet(paste0(newUMIs$ID1," ",consensus_mean$UMI)))
+  
+  
+  fileSplit <- as.data.table(str_split(filepath1,"\\/"))
+  fileSplit <- as.data.table(str_split(fileSplit[nrow(fileSplit)],"\\."))
+  output <- paste0(outputsFolder,"/", fileSplit[1], "_corrected.fastq.gz")
+  part <- fileSplit[1]
+  file.create(output)
+  writeFastq(file, output, mode = "a")
+  
+  #File2
+  file <- ShortReadQ(DNAStringSet(consensus_mean$read2),
+                     FastqQuality(consensus_mean$quality2),
+                     BStringSet(paste0(newUMIs$ID2," ",consensus_mean$UMI)))
+  
+  fileSplit <- as.data.table(str_split(filepath2,"\\/"))
+  fileSplit <- as.data.table(str_split(fileSplit[nrow(fileSplit)],"\\."))
+  output <- paste0(outputsFolder,"/", fileSplit[1], "_corrected.fastq.gz")
+  file.create(output)
+  writeFastq(file, output, mode = "a")
+  
+  output.csv <- as.data.table(cbind(UMI = consensus_mean$UMI,
+                                    UMIs = newUMIs$UMI,
+                                    counts = newUMIs$Counts,
+                                    read1 = consensus_mean$read1,
+                                    quality1 = consensus_mean$quality1,
+                                    read2 = consensus_mean$read2,
+                                    quality2 = consensus_mean$quality2,
+                                    ID1 = paste0(newUMIs$ID1," ",consensus_mean$UMI),
+                                    ID2 = paste0(newUMIs$ID2," ",consensus_mean$UMI)))
+  
+  write.table(output.csv,paste0(outputsFolder,"/",part,"_summary_table.csv"), sep ="\t", row.names = F)
+  
+  remove(part, file, output, fileSplit, output.csv)
+}
+  
+
 pairedR1R2 <- function(filepath1, 
                        filepath2, 
                        outputsFolder, 

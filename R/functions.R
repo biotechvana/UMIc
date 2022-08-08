@@ -93,6 +93,99 @@ groupingPairedR1 <- function(intermediate.table, # r1,
   return(result)
 }
 
+groupingPairedR2 <- function(intermediate.table,
+                             full,
+                             quality,
+                             full2,
+                             quality2,
+                             UMIlength){
+  
+  intermediate.table.c1 = intermediate.table[which(intermediate.table$count == 1), ]
+  intermediate.table.c2 = intermediate.table[which(intermediate.table$count != 1), ]
+  
+  result = list()
+  
+  if(nrow(intermediate.table.c1) > 0){
+    
+    f2 = full2[which(full2$UMI %in% intermediate.table.c1$UMI),] 
+    f2 = f2[order(f2$id), ]
+    
+    f1 = full[which(full$id %in% f2$id), ]
+    f1 = f1[order(f1$id), ]
+    
+    qr1 = quality[which(quality$id %in% f1$id), ]
+    qr1 = qr1[order(qr1$id), ]
+    qr1 = as.matrix(qr1[,1:(ncol(qr1)-1)])
+    qr1 = qr1 + 33
+    qr1 = base::apply(qr1, 1, intToUtf8)
+    qr1 = as.character(qr1)
+    
+    qr2 = quality2[which(quality2$id %in% f1$id), ]
+    qr2 = qr2[order(qr2$id), ]
+    qr2 = as.matrix(qr2[,1:(ncol(qr2)-1)])
+    qr2 = qr2 + 33
+    qr2 = base::apply(qr2, 1, intToUtf8)
+    qr2 = as.character(qr2)
+    
+    result.1 = data.table(UMI = f2$UMI12,
+                          read1 = f1$read, quality1 = qr1, 
+                          read2 = f2$read, quality2 = qr2)
+    
+    colnames(result.1) = c("UMI" , "read1", "quality1", "read2", "quality2")
+    
+    rm(f1, f2, qr1, qr2)
+    
+    result[[1]] = result.1
+    
+  }
+  
+  if(nrow(intermediate.table.c2) > 0){
+    
+    for(i in 1:nrow(intermediate.table.c2)){
+      
+      r1 = intermediate.table.c2$UMI[i]
+      
+      #reads with specific UMI
+      grouping2 = full2[which(full2$UMI == r1), ]
+      grouping <- full[which(full$id %in% grouping2$id), ]
+      
+      quality.1 = quality[which(quality$id %in% grouping$id), ]
+      quality.2 = quality2[which(quality2$id %in% grouping2$id), ]
+      
+      grouping = grouping[order(grouping$id), ]
+      grouping2 = grouping2[order(grouping2$id), ]
+      
+      quality.1 = quality.1[order(quality.1$id), ]
+      quality.2 = quality.2[order(quality.2$id), ]
+      
+      #File 1
+      grouping$UMI <- grouping2$UMI
+      grouping_q = cbind(grouping, quality.1[,-c("id")])
+      
+      #File 2
+      grouping_q2 = cbind(grouping2, quality.2[,-c("id")])
+      
+      rm(grouping, grouping2, quality.1, quality.2)
+      
+      result1 <- calculationsFunction(grouping_q) 
+      result2 <- calculationsFunction(grouping_q2)
+      
+      result.2 <- data.table(UMI = substr(r1,1,UMIlength),
+                             read1 = result1[1,1], quality1 = result1[1,2], 
+                             read2 = result2[1,1], quality2 = result2[1,2])
+      
+      colnames(result.2) <- c("UMI" , "read1", "quality1", "read2", "quality2")
+      
+      result[[i+1]] = result.2
+    }
+  }
+  
+  result_mean = rbindlist(result)
+  
+  return(result_mean)
+}
+
+
 groupingPairedR1R2 <- function(intermediate.table, # counts, 
                                full, 
                                quality, 
@@ -425,6 +518,77 @@ groupingFinalPairedR1 <- function(newUMIs, # r1,
   return(result)
 }
 
+groupingFinalPairedR2 <- function(newUMIs,
+                                  full,
+                                  quality,
+                                  full2,
+                                  quality2,
+                                  result_mean,
+                                  UMIlength){
+  newUMIs.1 = newUMIs[which(str_length(newUMIs$UMI) == UMIlength), ]
+  newUMIs.2 = newUMIs[which(str_length(newUMIs$UMI) != UMIlength), ]
+  
+  rm(newUMIs)
+  
+  result = list()
+  
+  if(nrow(newUMIs.1) > 0){
+    
+    result.1 = result_mean[which(result_mean$UMI %in% newUMIs.1$UMI),]
+    colnames(result.1) = c("UMI" , "read1", "quality1", "read2", "quality2")
+    
+    result[[1]] = result.1
+    
+  }
+  
+  if(nrow(newUMIs.2) > 0){
+    
+    for(i in 1:nrow(newUMIs.2)){
+      
+      r1 = newUMIs.2$UMI[i]
+      
+      #reads with specific UMI
+      grouping = full[str_detect(full$UMI,as.character(r1)), ]
+      grouping2 <- full2[which(full2$id %in% grouping$id), ]
+      
+      quality.1 = quality[which(quality$id %in% grouping$id), ]
+      quality.2 = quality2[which(quality2$id %in% grouping2$id), ]
+      
+      grouping = grouping[order(grouping$id), ]
+      grouping2 = grouping2[order(grouping2$id), ]
+      
+      quality.1 = quality.1[order(quality.1$id), ]
+      quality.2 = quality.2[order(quality.2$id), ]
+      
+      #File 1
+      grouping_q = cbind(grouping, quality.1[,-c("id")])
+      
+      #File 2
+      grouping2$UMI <- grouping$UMI
+      
+      grouping_q2 = cbind(grouping2, quality.2[,-c("id")])
+      
+      rm(grouping, grouping2, quality.1, quality.2)
+      
+      result1 <- calculationsFunction(grouping_q) 
+      result2 <- calculationsFunction(grouping_q2)
+      
+      result.2 <- data.table(UMI = substr(r1,1,12),
+                             read1 = result1[1,1], quality1 = result1[1,2], 
+                             read2 = result2[1,1], quality2 = result2[1,2])
+      
+      colnames(result.2) <- c("UMI" , "read1", "quality1", "read2", "quality2")
+      
+      result[[i+2]] = result.2
+    }
+    
+  }
+  
+  consensus_mean = rbindlist(result)
+  
+  return(consensus_mean)
+}
+
 groupingFinalPairedR1R2 <- function(newUMIs, # r1, 
                                     full, 
                                     quality, 
@@ -622,6 +786,118 @@ UMIcorrectionPairedR1 <- function(intermediate.table,
       
       temp_read1 = first_consensus[which(first_consensus$UMI %in% temp.intermediate$UMI),]$read1
       temp_read2 = first_consensus[which(first_consensus$UMI %in% temp.intermediate$UMI),]$read2
+      
+      dist1 = stringdist::stringdistmatrix(a = best$read1,
+                                           b = temp_read1,
+                                           method = "hamming")[1,]
+      
+      dist2 = stringdist::stringdistmatrix(a = best$read2,
+                                           b = temp_read2,
+                                           method = "hamming")[1,]
+      
+      dist.calc <- dist.calc + (2*length(dist1))
+      
+      who = which((dist1 <= sequenceDistance) & (dist2 <= sequenceDistance))
+      
+      if(length(who) > 0){
+        
+        temp.intermediate = temp.intermediate[who,]
+        list.best = c(list.best, temp.intermediate$UMI)
+        list.counts = c(list.counts, temp.intermediate$count)
+        
+        list.best <- paste(list.best, collapse = "|")
+        list.counts <- paste(list.counts, collapse = "|")
+        
+      }
+      
+    }
+    
+    
+    # iterations <- c(2:nrow(intermediate.table))
+    # 
+    # for (i in iterations){
+    #   
+    #   base_dist <- stringDist(c(best$UMI[1], intermediate.table$UMI[i]), method = "hamming")
+    #   
+    #   if (base_dist <= UMIdistance){
+    #     
+    #     temp_read1 <- first_consensus[which(first_consensus$UMI ==  intermediate.table$UMI[i]),read1]
+    #     dist1 <- stringDist(c(best$read1[1], temp_read1), method = "hamming") 
+    #     
+    #     temp_read2 <- first_consensus[which(first_consensus$UMI ==  intermediate.table$UMI[i]),read2]
+    #     dist2 <- stringDist(c(best$read2[1], temp_read2), method = "hamming") 
+    #     
+    # 
+    #     if ((as.numeric(dist1) <= sequenceDistance) & (as.numeric(dist2) <= sequenceDistance)){
+    #       list.best <- paste0(list.best,"|",intermediate.table$UMI[i])
+    #       list.counts <- paste0(list.counts,"|",intermediate.table$count[i])
+    #     }
+    #   }
+    # }
+    
+    IDs_1 <- append(IDs_1, intermediate.table$ID1[1])
+    IDs_2 <- append(IDs_2, intermediate.table$ID2[1])
+    counts <- append(counts, list.counts)
+    uniqueUMIs <- append(uniqueUMIs, list.best)
+    intermediate.table <- intermediate.table[str_detect(intermediate.table$UMI, 
+                                                        as.character(list.best), 
+                                                        negate = T), ]
+    
+  }
+  
+  if (!is.null(intermediate.table)){
+    
+    IDs_1 <- append(IDs_1,intermediate.table$ID1[1])
+    IDs_2 <- append(IDs_2,intermediate.table$ID2[1])
+    counts <- append(counts, intermediate.table$count[1])
+    uniqueUMIs <- append(uniqueUMIs,intermediate.table$UMI[1])
+    
+  }
+  
+  newUMIs <- as.data.table(cbind(UMI = uniqueUMIs, ID1 = IDs_1, ID2 = IDs_2, Counts = counts))
+  
+  line = paste0("Number of Hamming distances calculated: ", dist.calc)
+  write(line, paste0(outputsFolder,"/extra_info.txt"), append = T)
+  
+  return(newUMIs)
+}
+
+UMIcorrectionPairedR2 <- function(intermediate.table,
+                                  result_mean,
+                                  sequenceDistance,
+                                  UMIdistance,
+                                  outputsFolder){
+  dist.calc <- 0
+  
+  uniqueUMIs <- c()
+  IDs_1 <- c()
+  IDs_2 <- c()
+  counts <- c()
+  
+  #while((nrow(intermediate.table)>1) & (intermediate.table[1,count] > 5)){
+  while(nrow(intermediate.table) > 1){
+    
+    best <- result_mean[which(result_mean$UMI == intermediate.table$UMI[1]),]
+    list.best <- best$UMI[1]
+    list.counts <- intermediate.table$count[1]
+    
+    
+    temp.intermediate = intermediate.table[2:nrow(intermediate.table), ]
+    
+    base_dist <- stringdist::stringdistmatrix(a = best$UMI[1], 
+                                              b = temp.intermediate$UMI, 
+                                              method = "hamming")[1,]
+    
+    dist.calc <- dist.calc + length(base_dist)
+    
+    who = which(base_dist <= UMIdistance)
+    
+    if(length(who) > 0){
+      
+      temp.intermediate = temp.intermediate[who,]
+      
+      temp_read1 = result_mean[which(result_mean$UMI %in% temp.intermediate$UMI),]$read1
+      temp_read2 = result_mean[which(result_mean$UMI %in% temp.intermediate$UMI),]$read2
       
       dist1 = stringdist::stringdistmatrix(a = best$read1,
                                            b = temp_read1,

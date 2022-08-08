@@ -1,0 +1,8 @@
+Number of Hamming distances calculated: 6
+Total time in secs: 10.5148868560791
+Total time in mins: 0.175248114267985
+Memory used at start: 536024880
+Memory used after data cleaning: 561174840
+Memory used after first consensus: 585783496
+Memory used after UMI merging: 568839320
+Memory used after second consensus: 568779160
